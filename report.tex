@@ -1,0 +1,376 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{bm}
+\usepackage{mathtools}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{array}
+\usepackage{hyperref}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\dom}{\Omega}
+\newcommand{\bdry}{\partial\Omega}
+\newcommand{\Gtrue}{\mathcal{G}^{\star}}
+\newcommand{\Gprior}{\widetilde{\mathcal{G}}}
+\newcommand{\Ghat}{\widehat{\mathcal{G}}}
+\newcommand{\Ntrue}{\mathcal{N}^{\star}}
+\newcommand{\Nass}{\widetilde{\mathcal{N}}}
+\newcommand{\Rcorr}{\mathcal{R}}
+\newcommand{\lap}{\Delta}
+\newcommand{\dt}{\partial_t}
+\newcommand{\dx}{\partial_x}
+\newcommand{\dxx}{\partial_{xx}}
+\newcommand{\dxxx}{\partial_{xxx}}
+\newcommand{\norm}[1]{\lVert #1 \rVert}
+
+\title{Correcting Model Misspecification in Neural-Operator Physics Priors}
+\author{Shreeyam Bangera}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A neural operator is trained without solution data, using only the residual of an assumed PDE
+and its boundary or initial conditions; this yields a \emph{physics prior} that maps a problem
+input to an approximate solution. When the assumed PDE differs from the process that generated
+the data---parametrically or structurally---the prior carries a systematic, data-irreducible
+error. We formalize this model-misspecification error, state an architecture-agnostic scheme
+that corrects it with a small labeled set by learning an additive correction on top of the
+frozen prior, list the models and hyperparameters used throughout, and describe a benchmark of
+five PDEs, each with four graded misspecifications spanning wrong coefficients through wrong
+operator structure.
+\end{abstract}
+
+\section{The physics prior}
+\label{sec:setup}
+
+Let $\dom\subset\R^{d}$ be a bounded domain. A problem instance is specified by an input
+function $v\in\mathcal{V}$ (a forcing term for the steady problems, an initial condition for the
+time-dependent ones), drawn from a probability measure $\mu$ on $\mathcal{V}$. The true process
+is governed by a differential or integro-differential operator $\Ntrue$ with a boundary/initial
+constraint $\mathcal{C}$,
+\begin{equation}
+\label{eq:true}
+\Ntrue\!\left(u, v\right)(z) = 0,\quad z\in\dom,
+\qquad
+\mathcal{C}\!\left(u, v\right)(z) = 0,\quad z\in\Gamma,
+\end{equation}
+where $\Gamma$ is the boundary $\bdry$ (Dirichlet data) or the initial slice $\{t=0\}$.
+Equation~\eqref{eq:true} defines the true solution map $\Gtrue:v\mapsto u$.
+
+We train a neural operator $\mathcal{G}_\theta$ \emph{without any solution labels}. Given an
+assumed model $\Nass$ and the same constraint $\mathcal{C}$, we minimize the expected squared
+residual over interior collocation points $X_c\subset\dom$ and the constraint over points
+$X_\Gamma\subset\Gamma$,
+\begin{equation}
+\label{eq:physloss}
+\mathcal{L}_{\mathrm{phys}}(\theta)
+= \E_{v\sim\mu}\!\left[
+\frac{1}{|X_c|}\sum_{z\in X_c}\bigl|\Nass\!\left(\mathcal{G}_\theta(v), v\right)(z)\bigr|^{2}
+\right]
++ \lambda\,
+\E_{v\sim\mu}\!\left[
+\frac{1}{|X_\Gamma|}\sum_{z\in X_\Gamma}\bigl|\mathcal{C}\!\left(\mathcal{G}_\theta(v), v\right)(z)\bigr|^{2}
+\right].
+\end{equation}
+Collocation points are resampled each step and no term in \eqref{eq:physloss} uses the target
+$u=\Gtrue(v)$. Write the minimizer as the \emph{prior operator}
+$\Gprior = \arg\min_\theta \mathcal{L}_{\mathrm{phys}}(\theta)$. If $\Nass=\Ntrue$, then
+$\Gprior$ recovers the true solution map up to optimization and approximation error, and
+$\mathcal{L}_{\mathrm{phys}}$ is a consistent surrogate for the supervised loss.
+
+\section{Model misspecification}
+\label{sec:misspec}
+
+\subsection{What we are trying to do}
+\label{sec:theory}
+In practice the assumed model is wrong: $\Nass\neq\Ntrue$, so the prior solves a different
+problem than the one that produced the data. Define the \emph{model-form error} of the prior on
+input $v$,
+\begin{equation}
+\label{eq:bias}
+\varepsilon(v) \;=\; \Gprior(v) - \Gtrue(v).
+\end{equation}
+Two properties distinguish $\varepsilon$ from ordinary estimation error.
+\begin{enumerate}[leftmargin=1.4em,itemsep=2pt]
+\item \textbf{It is systematic.} $\varepsilon$ is fixed by the gap $\Nass-\Ntrue$, not by finite
+sampling. Adding collocation points, widening the network, or training longer drives
+$\mathcal{G}_\theta$ toward $\Gprior$ and therefore \emph{toward}, not away from, the biased
+solution.
+\item \textbf{It is structured.} Because $\Gprior(v)$ still satisfies the assumed physics and the
+correct constraints, $\varepsilon(v)$ inherits regularity from both operators and is typically
+smoother and smaller in amplitude than $u$ itself.
+\end{enumerate}
+We separate two regimes. \emph{Parametric} misspecification keeps the operator form and perturbs
+a coefficient (a wrong diffusivity or wavenumber). \emph{Structural} misspecification changes
+the operator class itself: linearizing a nonlinear term, replacing a nonlocal operator by a local
+one, adding a term absent from the true model, or turning a constant coefficient into a spatially
+varying field. The aim is to quantify, across both regimes and at graded severity, how large
+$\varepsilon$ is and how cheaply it can be removed with a small amount of labeled data
+(Section~\ref{sec:correct}).
+
+\subsection{Physics-prior hyperparameters}
+\label{sec:prior-hparams}
+The prior $\Gprior$ is a DeepONet in every problem: a branch network encodes the input $v$, a
+trunk network encodes the query coordinate, and their $P$-dimensional codes are combined by an
+inner product. For the 1D and space--time problems (P1--P4) the branch and trunk are
+$\tanh$-MLPs; the trunk of P2--P4 takes truncated Fourier features of the coordinate (order $M$).
+For the 2D problem (P5) the branch is a convolutional encoder of the source image and the trunk
+takes random Fourier features (scales $\{6,12,20\}$, $K=64$). Derivatives entering the residual
+$\Nass$ are taken by automatic differentiation of the trunk; the nonlocal (fractional) operator
+of P4 is evaluated spectrally. Table~\ref{tab:prior} lists the sizes and the physics-training
+schedule. All training uses Adam at learning rate $10^{-3}$, seed $0$, and early stopping on the
+validation physics loss with relative tolerance $10^{-4}$.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lllcccr@{}}
+\toprule
+& Branch & Trunk & $P$ & Epochs/pat. & Colloc.\ $N_c$ & Params \\
+\midrule
+P1 & MLP $[128,128]$ & MLP $[64,64,64]$ & 64 & 1500 / 60 & 101 & $50{,}433$ \\
+P2 & MLP $[256,256]$ & Fourier$_{16}$ + MLP $[128,128,128]$ & 128 & 800 / 50 & 3000 & $218{,}369$ \\
+P3 & MLP $[256,256]$ & Fourier$_{16}$ + MLP $[128,128,128]$ & 128 & 800 / 50 & 3000 & $218{,}369$ \\
+P4 & MLP $[256,256]$ & Fourier$_{20}$ + MLP $[128,128,128]$ & 128 & 800 / 50 & 3000 & $284{,}929$ \\
+P5 & CNN $[16,32,64,64]$ & RFF$_{384}$ + MLP $[256,256,256]$ & 128 & 800 / 50 & 2500 & $1{,}404{,}993$ \\
+\bottomrule
+\end{tabular}
+\caption{Physics-prior architecture, training schedule, and total parameter count. Fourier$_{M}$
+denotes trunk Fourier features of order $M$; RFF$_{384}$ the $384$-dimensional random Fourier
+feature map; the P5 branch is a four-layer stride-2 CNN with the listed channel widths. Steps per
+epoch: $8$ (P1, P5), $16$ (P2--P4). Physics batch (inputs per step): $256$ (P1), $32$ (P2--P3),
+$64$ (P4), $8$ (P5). Boundary/initial data: Dirichlet penalty $\lambda{=}10$ (P1), initial-condition
+penalty $\lambda{=}20$ (P2--P4); P5 enforces homogeneous Dirichlet data exactly by multiplying the
+output by the bump $x(1-x)y(1-y)$, so it needs no penalty. Optimizer Adam, learning rate
+$10^{-3}$, seed $0$, early stopping on the validation physics loss (relative tolerance $10^{-4}$).}
+\label{tab:prior}
+\end{table}
+
+\section{Correcting the misspecified prior}
+\label{sec:correct}
+
+We assume a \emph{small} labeled set $\mathcal{D}=\{(v_i,u_i)\}_{i=1}^{N}$ with
+$u_i=\Gtrue(v_i)$, alongside the unlabeled distribution $\mu$ used for the prior. The prior is
+treated as a fixed, informative guess and is not retrained.
+
+\paragraph{Additive correction.}
+Freeze $\Gprior$ and introduce a second neural operator, the correction
+$\Rcorr_\phi:\mathcal{V}\times\mathcal{U}\to\mathcal{U}$, that takes the input and the prior
+prediction and outputs a residual field. The corrected estimator is
+\begin{equation}
+\label{eq:combined}
+\Ghat(v) \;=\; \Gprior(v) \;+\; \Rcorr_\phi\!\left(v,\ \Gprior(v)\right),
+\end{equation}
+trained by supervised regression,
+\begin{equation}
+\label{eq:dataloss}
+\mathcal{L}_{\mathrm{data}}(\phi)
+= \frac{1}{N}\sum_{i=1}^{N}
+\norm{\,\Gprior(v_i) + \Rcorr_\phi\!\left(v_i,\Gprior(v_i)\right) - u_i\,}_{L^2(\dom)}^{2}.
+\end{equation}
+At the optimum $\Rcorr_\phi(v,\Gprior(v))\approx u-\Gprior(v)=-\varepsilon(v)$: the correction
+learns the model-form error itself. When the prior captures the dominant structure of the
+solution, $\varepsilon$ is a low-amplitude, smooth field, so $\Rcorr_\phi$ has an easier target
+than $\Gtrue$ and is learnable from few labels. The scheme is agnostic to the operator
+architecture and to the specific misspecification; the prior enters only through the frozen map
+$v\mapsto\Gprior(v)$.
+
+\paragraph{Baselines.}
+To isolate the value of the prior we compare \eqref{eq:combined} against a \emph{pure-data}
+operator $\mathcal{H}_\psi$ trained from scratch on the same labels,
+$\min_\psi \tfrac{1}{N}\sum_i \norm{\mathcal{H}_\psi(v_i)-u_i}_{L^2}^2$, with no prior. For each
+PDE and level we report the prior's held-out physics residual, the prior's own relative $L^2$
+error $\norm{\Gprior(v)-u}/\norm{u}$, the pure-data operators, and the combined estimator
+\eqref{eq:combined}. The contrast, read against the prior error, measures how much a
+\emph{wrong} model still helps once corrected.
+
+\subsection{Estimators and hyperparameters}
+\label{sec:corr-hparams}
+Both the correction $\Rcorr_\phi$ and the pure-data baseline $\mathcal{H}_\psi$ are instantiated
+as a DeepONet and, separately, as a Fourier neural operator (FNO), so each problem yields four
+data-trained models: pure-data DeepONet, pure-data FNO, combined DeepONet, combined FNO
+(P5 uses FNO only). The combined variants add one input to the same backbone---the DeepONet
+trunk takes the prior value as an extra feature, the FNO takes the prior field as an extra
+channel (for P1 the combined DeepONet branch additionally ingests the prior field, doubling its
+input width). The data DeepONet has the same trunk/coordinate encoding as the prior but a smaller
+capacity; the FNO is a standard spectral-convolution stack. Table~\ref{tab:corr} lists sizes and
+the supervised schedule. All training uses Adam at learning rate $10^{-3}$, seed $0$, and early
+stopping on the validation loss with relative tolerance $5\times10^{-3}$.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}llrlrcc@{}}
+\toprule
+& Data DeepONet ($P{=}64$) & DON par. & Data FNO ($w,m,L$) & FNO par. & Ep./pat. & Batch (DON/FNO) \\
+\midrule
+P1 & $[128,128]/[64,64,64]$ & $50{,}433$ & FNO1d $24,\,16,\,2$ & $23{,}033$ & 300 / 20 & 256 / 256 \\
+P2 & $[128,128]/[64,64,64]$ & $72{,}321$ & FNO2d $12,\,(8,8),\,2$ & $39{,}017$ & 200 / 20 & 64 / 16 \\
+P3 & $[128,128]/[64,64,64]$ & $72{,}321$ & FNO2d $12,\,(8,8),\,2$ & $39{,}017$ & 200 / 20 & 64 / 16 \\
+P4 & $[128,128]/[64,64,64]$ & $105{,}601$ & FNO2d $12,\,(8,8),\,2$ & $39{,}017$ & 200 / 20 & 64 / 8 \\
+P5 & --- (FNO only) & --- & FNO2d $32,\,(24,24),\,4$ & $4{,}727{,}297$ & 200 / 20 & --- / 8 \\
+\bottomrule
+\end{tabular}
+\caption{Correction and baseline architectures, parameter counts, and supervised training.
+Parameters are for the pure-data model; the combined variant adds one input (the prior value or
+field): the DeepONet trunk gains one feature ($+64$ params), except for P1 where the combined
+DeepONet also doubles its branch input to $202$, giving $63{,}361$; the FNO gains one lifting
+channel ($+12$ to $+32$ params). Modes $m$ are retained Fourier modes per axis, $w$ the channel
+width, $L$ the number of spectral layers. The DeepONet loss samples $4000$ grid points per input
+(P2--P4), $4096$ (P5, unused there), or the full grid (P1); the FNO predicts the whole field.
+Optimizer Adam, learning rate $10^{-3}$, seed $0$, early stopping on the validation loss (relative
+tolerance $5\times10^{-3}$).}
+\label{tab:corr}
+\end{table}
+
+\section{Benchmark problems and their misspecifications}
+\label{sec:data}
+
+Each dataset is a set of input/solution pairs $(v,u)$ generated from a fixed true model, split
+$2048/200/500$ into train/validation/test. Inputs are Gaussian random fields (P2--P5) or a
+manufactured random combination of modes (P1); every solution is computed in closed form---P1
+analytically, P3/P4 by the diagonal Fourier propagator, P5 by the diagonal Dirichlet sine
+transform---or spectrally converged (P2, pseudospectral RK4 at $512$ modes, coarsened to $256$).
+The datasets therefore carry no discretization error, so the discrepancies the benchmark measures
+are model-form error alone, not solver error. Table~\ref{tab:gen} collects domains, grids, and
+input laws. The prior for a given level minimizes \eqref{eq:physloss} with the \emph{assumed}
+residual below; the four levels \textsf{low}, \textsf{med}, \textsf{high}, \textsf{max} are ordered
+by increasing departure from the true operator. Here $v$ is the input and $u$ the solution;
+$C_0=\big(\E_x v^2\big)^{1/2}$ is the root-mean-square input amplitude.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+& Domain & Grid & Input law & Solution \\
+\midrule
+P1 & $x\in[-1,1]$ & $101$ & manufactured $\tfrac{x^2-1}{10}\sum_{i=1}^{5}(w^s_i\sin i\pi x+w^c_i\cos i\pi x),\ w\!\sim\!U(0,1)$ & analytic \\
+P2 & $x\in[0,1)$ per., $t\in[0,0.5]$ & $256\times101$ & GRF $\mathcal{N}\!\big(0,\,25^2(-\lap+25I)^{-2}\big)$ & pseudospectral RK4 \\
+P3 & $x\in[0,1)$ per., $t\in[0,0.5]$ & $256\times101$ & GRF $\mathcal{N}\!\big(0,\,25^2(-\lap+25I)^{-2}\big)$ & exact Fourier \\
+P4 & $x\in[0,1)$ per., $t\in[0,1]$ & $512\times101$ & GRF $\mathcal{N}\!\big(0,\,5^2(-\lap+25I)^{-1.25}\big)$ & exact Fourier \\
+P5 & $(0,1)^2$, interior & $128\times128$ & sine-basis GRF, $c_{mn}\!\sim\!\mathcal{N}\!\big(0,\,836.5^2(\lambda_{mn}+25)^{-1.5}\big)$ & exact sine transform \\
+\bottomrule
+\end{tabular}
+\caption{Data generation. All splits are $2048/200/500$ (train/val/test). ``Grid'' is $N_x$ (P1),
+$N_x\times N_t$ (P2--P4), or the interior $N\times N$ (P5). $\lambda_{mn}=\pi^2(m^2+n^2)$ are the
+Dirichlet eigenvalues. The P4 input measure uses exponent $1.25$ (a heavier spectral tail than the
+$2$ of P2/P3), so its nonlocal-versus-local discrepancy is not masked by a low-wavenumber input.}
+\label{tab:gen}
+\end{table}
+
+\subsection*{P1 --- Nonlinear diffusion--reaction (1D, steady)}
+Domain $\dom=(-1,1)$ on a $101$-point grid, input forcing $v(x)$, homogeneous Dirichlet data
+$u(-1)=u(1)=0$. True model:
+\begin{equation}
+D\,\dxx u - K_0\, e^{-u} u - v = 0,
+\qquad D=0.1,\ K_0=0.5 .
+\end{equation}
+Assumed residuals driven to zero by the prior:
+\begin{align*}
+\textsf{low:}\ & 0.11\,\dxx u - 0.5\,e^{-u} u - v
+&&\text{(diffusivity $+10\%$)}\\
+\textsf{med:}\ & 0.15\,\dxx u - 0.7\,e^{-u} u - v
+&&\text{(diffusivity and reaction rate off)}\\
+\textsf{high:}\ & 0.1\,\dxx u - 0.5\, u - v
+&&\text{(reaction linearized, $e^{-u}u\!\to\!u$)}\\
+\textsf{max:}\ & \dx\!\big(D(x)\,\dx u\big) - 0.5\,e^{-u} u - v,\quad D(x)=0.1\,(1+0.5\cos 2\pi x)
+&&\text{(constant $D\!\to\!$ heterogeneous)}
+\end{align*}
+
+\subsection*{P2 --- Viscous Burgers (1+1D)}
+Space--time domain with periodic $x$, initial condition $u(x,0)=v(x)$.
+True model:
+\begin{equation}
+\dt u + u\,\dx u - \nu\,\dxx u = 0, \qquad \nu = 0.01 .
+\end{equation}
+Assumed residuals:
+\begin{align*}
+\textsf{low:}\ & \dt u + u\,\dx u - 0.013\,\dxx u &&\text{(viscosity $+30\%$)}\\
+\textsf{med:}\ & \dt u + u\,\dx u - 0.03\,\dxx u &&\text{(viscosity $3\times$)}\\
+\textsf{high:}\ & \dt u + C_0\,\dx u - 0.01\,\dxx u &&\text{(advection linearized, $u\dx u\!\to\!C_0\dx u$)}\\
+\textsf{max:}\ & \dt u + u\,\dx u + \delta\,\dxxx u,\quad \delta=10^{-3} &&\text{(viscosity dropped, KdV dispersion added)}
+\end{align*}
+
+\subsection*{P3 --- Advection--diffusion (1+1D)}
+Periodic $x$, initial condition $u(x,0)=v(x)$.
+True model:
+\begin{equation}
+\dt u + c\,\dx u - \nu\,\dxx u = 0, \qquad c=1,\ \nu=10^{-3}.
+\end{equation}
+Assumed residuals:
+\begin{align*}
+\textsf{low:}\ & \dt u + 1.05\,\dx u - \nu\,\dxx u &&\text{(wave speed $+5\%$)}\\
+\textsf{med:}\ & \dt u + 1.3\,\dx u - \nu\,\dxx u &&\text{(wave speed $+30\%$)}\\
+\textsf{high:}\ & \dt u + c(x)\,\dx u - \nu\,\dxx u,\quad c(x)=1+0.3\sin 2\pi x &&\text{(constant $c\!\to\!$ variable)}\\
+\textsf{max:}\ & \dt u + (1+u)\,\dx u - \nu\,\dxx u &&\text{(linear $\to$ nonlinear advection)}
+\end{align*}
+
+\subsection*{P4 --- Fractional diffusion (1+1D)}
+Periodic $x$, initial condition $u(x,0)=v(x)$. The fractional Laplacian $(-\lap)^{s}$ acts in
+Fourier space through the symbol $|2\pi k|^{2s}$.
+True model:
+\begin{equation}
+\dt u + \kappa\,(-\lap)^{s} u = 0, \qquad \kappa=0.03,\ s=0.75 .
+\end{equation}
+Assumed residuals:
+\begin{align*}
+\textsf{low:}\ & \dt u + 0.033\,(-\lap)^{0.75} u &&\text{(coefficient $+10\%$)}\\
+\textsf{med:}\ & \dt u + 0.03\,(-\lap)^{0.65} u &&\text{(wrong fractional order $s$)}\\
+\textsf{high:}\ & \dt u - 0.03\,\dxx u &&\text{(nonlocal $\to$ local diffusion)}\\
+\textsf{max:}\ & \dt u - \dx\!\big(a(x)\,\dx u\big),\quad a(x)=0.03\,(1+0.5\cos 2\pi x) &&\text{(nonlocal $\to$ heterogeneous local)}
+\end{align*}
+
+\subsection*{P5 --- Helmholtz (2D)}
+Domain $\dom=(0,1)^2$ on a $128\times128$ interior grid, source $v(x,y)$, homogeneous Dirichlet
+data $u|_{\bdry}=0$. True model:
+\begin{equation}
+-\lap u - \kappa^{2} u - v = 0, \qquad \kappa^{2}=3765.25\ \ (\kappa=61.362).
+\end{equation}
+The value $\kappa^2=3765.25$ is the midpoint of the widest gap in the Dirichlet spectrum below
+$9000$ (between eigenvalues $3720.8$ and $3809.7$), so the true operator is well conditioned. The
+\textsf{med} shift to $3805$ sits only $\approx 4.7$ from the eigenvalue $3809.7$, driving the
+resolvent toward a pole: a small parameter error produces an $O(1)$ change in $u$, so here
+misspecification magnitude and discrepancy size are not proportional.
+Assumed residuals:
+\begin{align*}
+\textsf{low:}\ & -\lap u - 3780\,u - v &&\text{(wavenumber $\kappa^2$ off)}\\
+\textsf{med:}\ & -\lap u - 3805\,u - v &&\text{(wavenumber $\kappa^2$ off more)}\\
+\textsf{high:}\ & -\nabla\!\cdot\!\big(a\,\nabla u\big) - \kappa^{2} u - v,\quad a=1+0.2\cos 2\pi x\,\cos 2\pi y
+&&\text{(homogeneous $\to$ smooth heterogeneous medium)}\\
+\textsf{max:}\ & -\nabla\!\cdot\!\big(a\,\nabla u\big) - \kappa^{2} u - v,\quad a=1+1.5\big(1+\tanh\tfrac{0.25-r}{0.02}\big)
+&&\text{(high-contrast radial scatterer)}
+\end{align*}
+with $r=\sqrt{(x-\tfrac12)^2+(y-\tfrac12)^2}$.
+
+\subsection*{Summary}
+Table~\ref{tab:taxonomy} classifies each level as parametric (wrong coefficient, correct form) or
+structural (wrong operator class). Severity grows left to right, and every problem reaches a
+structural misspecification at \textsf{max}.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}llllll@{}}
+\toprule
+& \textsf{low} & \textsf{med} & \textsf{high} & \textsf{max}\\
+\midrule
+P1 Diffusion--reaction & param.\ ($D$) & param.\ ($D,K_0$) & struct.\ (linearized) & struct.\ (heterog.\ $D$)\\
+P2 Burgers & param.\ ($\nu$) & param.\ ($\nu$) & struct.\ (linearized) & struct.\ (dispersive)\\
+P3 Advection--diffusion & param.\ ($c$) & param.\ ($c$) & struct.\ (variable $c$) & struct.\ (nonlinear)\\
+P4 Fractional diffusion & param.\ ($\kappa$) & struct.\ (order $s$) & struct.\ (local) & struct.\ (heterog.\ local)\\
+P5 Helmholtz & param.\ ($\kappa^2$) & param.\ ($\kappa^2$) & struct.\ (heterog.) & struct.\ (high contrast)\\
+\bottomrule
+\end{tabular}
+\caption{Misspecification type per problem and level.}
+\label{tab:taxonomy}
+\end{table}
+
+\end{document}
