@@ -35,18 +35,19 @@ P_THETA = 128
 TRUNK_THETA = [256, 256, 256]
 SMALL_P = 64
 SMALL_TH = [128, 128]
-FW, FM, FL = 12, (8, 8), 2
+FW, FM, FL = 32, (24, 24), 4
 
 LR = 1e-3
 REL_TOL = 5e-3
+PRIOR_REL_TOL = 1e-4
 STEPS_PER_EPOCH = 8
 PHYS_BATCH = 8
-N_COLLOC = 1500
+N_COLLOC = 2500
 DON_BATCH = 16
 N_PTS = 4096
 FNO_BATCH = 8
-PHYS_EPOCHS = 200
-PHYS_PATIENCE = 15
+PHYS_EPOCHS = 800
+PHYS_PATIENCE = 50
 DATA_EPOCHS = 200
 DATA_PATIENCE = 20
 CORR_BATCH = 32
@@ -244,7 +245,7 @@ def clone(m):
     return {k: v.detach().clone() for k, v in m.state_dict().items()}
 
 
-def fit(model, step, val, epochs, patience, tag):
+def fit(model, step, val, epochs, patience, tag, rel_tol=REL_TOL):
     opt = torch.optim.Adam(model.parameters(), lr=LR)
     best, state, wait = float("inf"), None, 0
     for ep in range(epochs):
@@ -252,7 +253,7 @@ def fit(model, step, val, epochs, patience, tag):
         for _ in range(STEPS_PER_EPOCH):
             opt.zero_grad(); loss = step(); loss.backward(); opt.step(); tl += loss.item()
         model.eval(); vl = val()
-        if vl < best * (1 - REL_TOL):
+        if vl < best * (1 - rel_tol):
             best, state, wait = vl, clone(model), 0
         else:
             wait += 1
@@ -333,7 +334,7 @@ def train_prior(name):
         idx = torch.arange(min(PHYS_BATCH, nval), device=DEVICE)
         return ploss(va_vi, va_vf, idx, vfix).item()
 
-    fit(prior, step, val, PHYS_EPOCHS, PHYS_PATIENCE, f"{name} prior")
+    fit(prior, step, val, PHYS_EPOCHS, PHYS_PATIENCE, f"{name} prior", rel_tol=PRIOR_REL_TOL)
     for p in prior.parameters():
         p.requires_grad_(False)
     prior.eval()

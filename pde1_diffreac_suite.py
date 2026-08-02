@@ -41,8 +41,9 @@ BATCH = 256
 STEPS_PER_EPOCH = 8
 LR = 1e-3
 REL_TOL = 5e-3
-PHYS_EPOCHS = 300
-PHYS_PATIENCE = 15
+PRIOR_REL_TOL = 1e-4
+PHYS_EPOCHS = 1500
+PHYS_PATIENCE = 60
 DATA_EPOCHS = 300
 DATA_PATIENCE = 20
 W_BC = 10.0
@@ -174,7 +175,7 @@ def clone(m):
     return {k: v.detach().clone() for k, v in m.state_dict().items()}
 
 
-def fit(model, step_fn, val_fn, epochs, patience, tag):
+def fit(model, step_fn, val_fn, epochs, patience, tag, rel_tol=REL_TOL):
     opt = torch.optim.Adam(model.parameters(), lr=LR)
     best, state, wait = float("inf"), None, 0
     for ep in range(epochs):
@@ -183,7 +184,7 @@ def fit(model, step_fn, val_fn, epochs, patience, tag):
             idx = torch.randint(0, ntr, (BATCH,), device=DEVICE)
             opt.zero_grad(); loss = step_fn(idx); loss.backward(); opt.step(); tl += loss.item()
         model.eval(); vl = val_fn()
-        if vl < best * (1 - REL_TOL):
+        if vl < best * (1 - rel_tol):
             best, state, wait = vl, clone(model), 0
         else:
             wait += 1
@@ -217,7 +218,7 @@ def train_prior(name):
         bc = u[:, 0] ** 2 + u[:, -1] ** 2
         return ((residual(name, u, ux, uxx, va_v, xq[..., 0]) ** 2).mean() + W_BC * bc.mean()).item()
 
-    fit(prior, step, val, PHYS_EPOCHS, PHYS_PATIENCE, f"{name} prior")
+    fit(prior, step, val, PHYS_EPOCHS, PHYS_PATIENCE, f"{name} prior", rel_tol=PRIOR_REL_TOL)
     for p in prior.parameters():
         p.requires_grad_(False)
     prior.eval()
