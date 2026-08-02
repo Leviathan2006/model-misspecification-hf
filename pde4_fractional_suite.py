@@ -257,6 +257,7 @@ def channels_comb(v, g):
     return torch.stack([gnorm(g), vb, X2D[None].expand(B, Nt, Nx), T2D[None].expand(B, Nt, Nx)], dim=1)
 
 
+@torch.no_grad()
 def fno_pure_full(model, v):
     n = v.shape[0]; out = torch.empty(n, Nt, Nx, device=DEVICE)
     for b in range(0, n, FNO_BATCH):
@@ -264,6 +265,7 @@ def fno_pure_full(model, v):
     return out
 
 
+@torch.no_grad()
 def fno_comb_full(model, v, g_field):
     n = v.shape[0]; out = torch.empty(n, Nt, Nx, device=DEVICE)
     for b in range(0, n, FNO_BATCH):
@@ -271,6 +273,7 @@ def fno_comb_full(model, v, g_field):
     return out
 
 
+@torch.no_grad()
 def don_pred_pure(model, v):
     n = v.shape[0]; out = torch.empty(n, Ng, device=DEVICE)
     for b in range(0, n, CORR_BATCH):
@@ -280,6 +283,7 @@ def don_pred_pure(model, v):
     return out
 
 
+@torch.no_grad()
 def don_pred_comb(model, v, g_field):
     n = v.shape[0]; g_flat = g_field.reshape(n, Ng); out = torch.empty(n, Ng, device=DEVICE)
     for b in range(0, n, CORR_BATCH):
@@ -290,6 +294,7 @@ def don_pred_comb(model, v, g_field):
     return out
 
 
+@torch.no_grad()
 def prior_full(prior, v):
     n = v.shape[0]; out = torch.empty(n, Ng, device=DEVICE)
     for b in range(0, n, CORR_BATCH):
