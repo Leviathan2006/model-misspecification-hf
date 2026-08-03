@@ -23,16 +23,31 @@ Run: set DATA_PATH to your Kaggle dataset .npz (keys: x, t, {train,val,test}_{v,
 
 import os
 import math
+import zipfile
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from huggingface_hub import hf_hub_download
 
-# ============================================================================
-# >>> SET THIS to your uploaded Kaggle dataset (the pde2 burgers .npz) <<<
-DATA_PATH = os.environ.get("MM_DATA", "/kaggle/input/FILL-ME/pde2_burgers.npz")
-# ============================================================================
+# ---- data source: Hugging Face dataset (zip of .npy files) ----
+HF_REPO = "alexanderthegreat69420/Model_misspecification"
+HF_ZIP = "pde2_burgers.zip"
+CACHE_ROOT = os.environ.get("MM_DATA_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mm_data"))
 OUT_DIR = os.environ.get("MM_OUT_DIR", "/kaggle/working" if os.path.isdir("/kaggle/working") else ".")
+
+
+def prepare_data(zip_name):
+    extract_dir = os.path.join(CACHE_ROOT, zip_name[:-4])
+    if not os.path.isdir(extract_dir):
+        os.makedirs(extract_dir, exist_ok=True)
+        zpath = hf_hub_download(repo_id=HF_REPO, filename=zip_name, repo_type="dataset")
+        with zipfile.ZipFile(zpath) as z:
+            z.extractall(extract_dir)
+    for root, _, files in os.walk(extract_dir):
+        if "x.npy" in files:
+            return root
+    raise FileNotFoundError(f"x.npy not found under {extract_dir}")
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SEED = 0
@@ -82,12 +97,13 @@ if SMOKE:
         return v, u
     tr_v_n, tr_u_n = _syn(40); va_v_n, va_u_n = _syn(8); te_v_n, te_u_n = _syn(8)
 else:
-    d = np.load(DATA_PATH)
-    x_np, t_np = d["x"].astype(np.float32), d["t"].astype(np.float32)
+    DATA_DIR = prepare_data(HF_ZIP)
+    load = lambda nm: np.load(os.path.join(DATA_DIR, nm)).astype(np.float32)
+    x_np, t_np = load("x.npy"), load("t.npy")
     Nx, Nt = x_np.shape[0], t_np.shape[0]
-    tr_v_n, tr_u_n = d["train_v"].astype(np.float32), d["train_u"].astype(np.float32)
-    va_v_n, va_u_n = d["val_v"].astype(np.float32), d["val_u"].astype(np.float32)
-    te_v_n, te_u_n = d["test_v"].astype(np.float32), d["test_u"].astype(np.float32)
+    tr_v_n, tr_u_n = load("train_v.npy"), load("train_u.npy")
+    va_v_n, va_u_n = load("val_v.npy"), load("val_u.npy")
+    te_v_n, te_u_n = load("test_v.npy"), load("test_u.npy")
 Ng, T_END = Nt * Nx, float(t_np.max())
 
 V_MEAN, V_STD = float(tr_v_n.mean()), float(tr_v_n.std())
