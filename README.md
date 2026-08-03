@@ -1,42 +1,18 @@
-# model-misspecification-hf
+# model-misspecification
 
-Frozen-prior PDE suites, loading data from Hugging Face instead of Kaggle.
+Current work: **`misspec_assay.py`** — additive CNO corrector + the misspecification
+"assay panel" (regress the correction against candidate differential operators) + the
+filters-as-stencils mechanistic check. Data loads from Hugging Face.
 
-Data: [`alexanderthegreat69420/Model_misspecification`](https://huggingface.co/datasets/alexanderthegreat69420/Model_misspecification)
-
-Each script downloads its PDE's zip on first run, extracts it under `mm_data/`, and
-writes metrics to `outputs/`. Both paths are overridable via the `MM_DATA_DIR` and
-`MM_OUT_DIR` environment variables.
-
-## Setup
-
-```bash
-pip install -r requirements.txt
-```
-
-For a Blackwell GPU install the CUDA 12.8 torch build first:
-
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu128
-pip install -r requirements.txt
-```
+Everything prior (the 5-PDE FNO benchmark, the N-sweep, the FNO/CNO spectral-probe
+diagnostics, the LaTeX report) is archived under [`v1_benchmark/`](v1_benchmark/).
 
 ## Run
-
 ```bash
-python pde1_diffreac_suite.py
-python pde2_burgers_suite.py
-python pde3_advdiff_suite.py
-python pde4_fractional_suite.py
-python pde5_helmholtz_suite.py
+pip install -r requirements.txt
+MM_SMOKE=1 python misspec_assay.py     # CPU wiring check, no download
+python misspec_assay.py                # real run (GPU; pulls data from HF)
 ```
-
-| Script | HF zip |
-|---|---|
-| `pde1_diffreac_suite.py` | `pde1_diffusion_reaction.zip` |
-| `pde2_burgers_suite.py` | `pde2_burgers.zip` |
-| `pde3_advdiff_suite.py` | `pde4_advection_diffusion.zip` |
-| `pde4_fractional_suite.py` | `pde5_fractional_diffusion.zip` |
-| `pde5_helmholtz_suite.py` | `pde6_helmholtz2d.zip` |
-
-If the dataset is gated/private, authenticate first with `huggingface-cli login`.
+Output: `assay_metrics.txt` — per-cell `R2_u_xx` (diffusive-error statistic), cross-reactivity
+`R2_{u_x,u,u_ux,u_xxx}` (specificity), `cno_fit_err`, `prior_l2`, and `stencil_*` (learned-filter
+projection onto {I, d_x, d_t, d_xx, d_tt, laplacian, d_xt}).
