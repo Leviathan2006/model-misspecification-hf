@@ -3,3 +3,6 @@ outputs/
 __pycache__/
 *.pyc
 .venv/
+
+assay_metrics.txt
+*_metrics.txt
